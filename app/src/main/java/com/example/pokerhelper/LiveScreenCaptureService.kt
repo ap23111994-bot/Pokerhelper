@@ -306,7 +306,8 @@ private object PokerTextParser {
             if (!number.isNullOrBlank()) result += "Банк: ${formatNumber(number)}"
         }
 
-        val blindLineIndex = normalized.indexOfFirst { line ->
+        val blindLineIndex = lines.indexOfFirst { raw ->
+            val line = raw.lowercase(Locale.ROOT)
             line.contains("blind") || line.contains("блайнд") || line.contains("ante") || line.contains("анте")
         }
         if (blindLineIndex >= 0) {
