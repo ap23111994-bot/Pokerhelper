@@ -119,9 +119,14 @@ class LiveScreenCaptureService : Service() {
                 val fullTextTask = recognizer.process(InputImage.fromBitmap(bitmap, 0))
                 val cardSlots = PokerCardImageReader.slots(bitmap.width, bitmap.height)
                 val playerSlots = PokerPlayerImageReader.slots(bitmap.width, bitmap.height)
+                // OCR the upper-left rank corner at higher scale; full-card OCR often misses overlapped cards.
                 val cardTasks = cardSlots.map { slot ->
-                    val crop = Bitmap.createBitmap(bitmap, slot.left, slot.top, slot.width, slot.height)
-                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 2, crop.height * 2, true)
+                    val cropLeft = slot.left + (slot.width * 0.03).toInt()
+                    val cropTop = slot.top + (slot.height * 0.02).toInt()
+                    val cropWidth = (slot.width * 0.62).toInt().coerceAtLeast(1)
+                    val cropHeight = (slot.height * 0.52).toInt().coerceAtLeast(1)
+                    val crop = Bitmap.createBitmap(bitmap, cropLeft, cropTop, cropWidth, cropHeight)
+                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 3, crop.height * 3, true)
                     val task = recognizer.process(InputImage.fromBitmap(enlarged, 0))
                     task.addOnCompleteListener {
                         enlarged.recycle()
@@ -129,19 +134,31 @@ class LiveScreenCaptureService : Service() {
                     }
                     task
                 }
-                val playerTasks = playerSlots.map { slot ->
-                    val crop = Bitmap.createBitmap(bitmap, slot.left, slot.top, slot.width, slot.height)
-                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 2, crop.height * 2, true)
+                // Names and stacks are OCRed separately to stop the name line or chip count
+                // from contaminating the stack value.
+                val playerNameTasks = playerSlots.map { slot ->
+                    val crop = Bitmap.createBitmap(
+                        bitmap, slot.left, slot.top, slot.width,
+                        (slot.height * 0.52).toInt().coerceAtLeast(1)
+                    )
+                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 3, crop.height * 3, true)
                     val task = recognizer.process(InputImage.fromBitmap(enlarged, 0))
-                    task.addOnCompleteListener {
-                        enlarged.recycle()
-                        crop.recycle()
-                    }
+                    task.addOnCompleteListener { enlarged.recycle(); crop.recycle() }
+                    task
+                }
+                val playerStackTasks = playerSlots.map { slot ->
+                    val cropTop = slot.top + (slot.height * 0.48).toInt()
+                    val cropHeight = (slot.height * 0.52).toInt().coerceAtLeast(1)
+                    val crop = Bitmap.createBitmap(bitmap, slot.left, cropTop, slot.width, cropHeight)
+                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 4, crop.height * 4, true)
+                    val task = recognizer.process(InputImage.fromBitmap(enlarged, 0))
+                    task.addOnCompleteListener { enlarged.recycle(); crop.recycle() }
                     task
                 }
                 val allTasks = mutableListOf<Task<*>>(fullTextTask)
                 allTasks.addAll(cardTasks)
-                allTasks.addAll(playerTasks)
+                allTasks.addAll(playerNameTasks)
+                allTasks.addAll(playerStackTasks)
                 Tasks.whenAllComplete(allTasks).addOnCompleteListener {
                     try {
                         val fullText = if (fullTextTask.isSuccessful) fullTextTask.result?.text.orEmpty() else ""
@@ -154,10 +171,14 @@ class LiveScreenCaptureService : Service() {
                             } else null
                         }.toMap()
                         val recognizedPlayers = playerSlots.indices.mapNotNull { index ->
-                            val task = playerTasks[index]
-                            if (task.isSuccessful) {
-                                PokerPlayerImageReader.parse(playerSlots[index], task.result?.text.orEmpty())
-                                    ?.let { playerSlots[index].label to it }
+                            val nameTask = playerNameTasks[index]
+                            val stackTask = playerStackTasks[index]
+                            if (nameTask.isSuccessful) {
+                                PokerPlayerImageReader.parse(
+                                    playerSlots[index],
+                                    nameTask.result?.text.orEmpty(),
+                                    if (stackTask.isSuccessful) stackTask.result?.text.orEmpty() else ""
+                                )?.let { playerSlots[index].label to it }
                             } else null
                         }.toMap()
                         updateOverlay(PokerTextParser.summarize(fullText, recognizedCards, recognizedPlayers))
@@ -354,7 +375,8 @@ private object PokerCardImageReader {
     }
 
     fun parseCard(text: String, bitmap: Bitmap, slot: Slot): PlayingCard? {
-        val rankMatch = Regex("(?i)(10|[2-9]|[AKQJT])").find(text.replace("O", "0")) ?: return null
+        val cleaned = text.uppercase(Locale.ROOT).replace("O", "0").replace("I", "1").replace("|", "1")
+        val rankMatch = Regex("(?i)(10|[2-9]|[AKQJT])").find(cleaned) ?: return null
         val rank = when (rankMatch.value.uppercase(Locale.ROOT)) {
             "A" -> 14; "K" -> 13; "Q" -> 12; "J" -> 11; "T", "10" -> 10
             else -> rankMatch.value.toIntOrNull() ?: return null
@@ -414,7 +436,7 @@ private object PokerPlayerImageReader {
         )
     }
 
-    fun parse(slot: Slot, text: String): PlayerInfo? {
+    fun parse(slot: Slot, text: String, stackText: String): PlayerInfo? {
         val cleanLines = text.lines().map { it.trim() }.filter { it.isNotBlank() }.distinct()
         if (cleanLines.isEmpty()) return null
         val all = cleanLines.joinToString(" ").lowercase(Locale.ROOT)
@@ -422,10 +444,10 @@ private object PokerPlayerImageReader {
         if (all.contains("вне игры") || all.contains("fold")) {
             val name = cleanLines.firstOrNull { it.any(Char::isLetter) && !it.contains("Fold", true) && !it.contains("Фолд", true) }
                 ?: slot.label
-            val stack = findStack(cleanLines)
+            val stack = findStack(stackText.lines().map { it.trim() }.filter { it.isNotBlank() }).let { it ?: findStack(cleanLines) }
             return PlayerInfo(name.take(22), stack, "ПАС")
         }
-        val stack = findStack(cleanLines)
+        val stack = findStack(stackText.lines().map { it.trim() }.filter { it.isNotBlank() }) ?: findStack(cleanLines)
         val name = cleanLines.firstOrNull { line ->
             line.any(Char::isLetter) && findStack(listOf(line)) == null &&
                 !line.contains("NLH", true) && !line.contains("bank", true) &&
