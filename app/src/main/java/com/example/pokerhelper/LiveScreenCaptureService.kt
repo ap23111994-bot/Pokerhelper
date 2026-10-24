@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -26,7 +27,10 @@ import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import com.google.android.gms.tasks.Task
+import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.Locale
@@ -113,16 +117,39 @@ class LiveScreenCaptureService : Service() {
             try {
                 val bitmap = imageToBitmap(image)
                 image.close()
-                recognizer.process(InputImage.fromBitmap(bitmap, 0))
-                    .addOnSuccessListener { result ->
-                        val summary = PokerTextParser.summarize(result.text)
-                        updateOverlay(summary)
+                val fullTextTask = recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                val cardSlots = PokerCardImageReader.slots(bitmap.width, bitmap.height)
+                val cardTasks = cardSlots.map { slot ->
+                    val crop = Bitmap.createBitmap(bitmap, slot.left, slot.top, slot.width, slot.height)
+                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 2, crop.height * 2, true)
+                    val task = recognizer.process(InputImage.fromBitmap(enlarged, 0))
+                    task.addOnCompleteListener {
+                        enlarged.recycle()
+                        crop.recycle()
                     }
-                    .addOnFailureListener { updateOverlay("Не удалось распознать текст. Повторная попытка…") }
-                    .addOnCompleteListener {
+                    task
+                }
+                val allTasks = mutableListOf<Task<*>>(fullTextTask)
+                allTasks.addAll(cardTasks)
+                Tasks.whenAllComplete(allTasks).addOnCompleteListener {
+                    try {
+                        val fullText = if (fullTextTask.isSuccessful) fullTextTask.result?.text.orEmpty() else ""
+                        val recognizedCards = cardSlots.indices.mapNotNull { index ->
+                            val slot = cardSlots[index]
+                            val task = cardTasks[index]
+                            if (task.isSuccessful && PokerCardImageReader.hasCard(bitmap, slot)) {
+                                PokerCardImageReader.parseCard(task.result?.text.orEmpty(), bitmap, slot)
+                                    ?.let { slot.label to it }
+                            } else null
+                        }.toMap()
+                        updateOverlay(PokerTextParser.summarize(fullText, recognizedCards))
+                    } catch (_: Exception) {
+                        updateOverlay("Не удалось распознать карты. Проверьте положение стола.")
+                    } finally {
                         bitmap.recycle()
                         processing.set(false)
                     }
+                }
             } catch (_: Exception) {
                 image.close()
                 processing.set(false)
@@ -276,54 +303,112 @@ class LiveScreenCaptureService : Service() {
     }
 }
 
+private object PokerCardImageReader {
+    data class Slot(val label: String, val left: Int, val top: Int, val width: Int, val height: Int)
+
+    fun slots(screenWidth: Int, screenHeight: Int): List<Slot> {
+        fun slot(label: String, x: Double, y: Double, w: Double, h: Double) = Slot(
+            label,
+            (screenWidth * x).toInt().coerceIn(0, screenWidth - 1),
+            (screenHeight * y).toInt().coerceIn(0, screenHeight - 1),
+            (screenWidth * w).toInt().coerceAtLeast(1).coerceAtMost(screenWidth - (screenWidth * x).toInt().coerceIn(0, screenWidth - 1)),
+            (screenHeight * h).toInt().coerceAtLeast(1).coerceAtMost(screenHeight - (screenHeight * y).toInt().coerceIn(0, screenHeight - 1))
+        )
+        val board = (0 until 5).map { i -> slot("Стол ${i + 1}", 0.195 + i * 0.12, 0.425, 0.116, 0.09) }
+        val hero = listOf(slot("Вы", 0.56, 0.76, 0.095, 0.08), slot("Вы", 0.615, 0.76, 0.105, 0.08))
+        return board + hero
+    }
+
+    fun hasCard(bitmap: Bitmap, slot: Slot): Boolean {
+        var bright = 0
+        var total = 0
+        val x0 = slot.left + slot.width / 8
+        val x1 = slot.left + slot.width * 7 / 8
+        val y0 = slot.top + slot.height / 10
+        val y1 = slot.top + slot.height * 9 / 10
+        for (y in y0 until y1 step 2) for (x in x0 until x1 step 2) {
+            val pixel = bitmap.getPixel(x, y)
+            val r = AndroidColor.red(pixel); val g = AndroidColor.green(pixel); val b = AndroidColor.blue(pixel)
+            if (r > 190 && g > 190 && b > 180 && kotlin.math.abs(r - g) < 45 && kotlin.math.abs(g - b) < 55) bright++
+            total++
+        }
+        return total > 0 && bright.toDouble() / total > 0.24
+    }
+
+    fun parseCard(text: String, bitmap: Bitmap, slot: Slot): PlayingCard? {
+        val rankMatch = Regex("(?i)(10|[2-9]|[AKQJT])").find(text.replace("O", "0")) ?: return null
+        val rank = when (rankMatch.value.uppercase(Locale.ROOT)) {
+            "A" -> 14; "K" -> 13; "Q" -> 12; "J" -> 11; "T", "10" -> 10
+            else -> rankMatch.value.toIntOrNull() ?: return null
+        }
+        val suit = detectSuit(bitmap, slot) ?: return null
+        return runCatching { PlayingCard(rank, suit) }.getOrNull()
+    }
+
+    private fun detectSuit(bitmap: Bitmap, slot: Slot): Char? {
+        var red = 0; var green = 0; var blue = 0; var dark = 0
+        val x0 = slot.left + slot.width / 7
+        val x1 = slot.left + slot.width * 6 / 7
+        val y0 = slot.top + slot.height * 38 / 100
+        val y1 = slot.top + slot.height * 92 / 100
+        for (y in y0 until y1 step 1) for (x in x0 until x1 step 1) {
+            val pixel = bitmap.getPixel(x, y)
+            val r = AndroidColor.red(pixel); val g = AndroidColor.green(pixel); val b = AndroidColor.blue(pixel)
+            when {
+                r > 125 && r > g * 1.35 && r > b * 1.25 -> red++
+                g > 75 && g > r * 1.22 && g > b * 1.15 -> green++
+                b > 100 && b > r * 1.18 && b > g * 1.10 -> blue++
+                r < 65 && g < 65 && b < 65 -> dark++
+            }
+        }
+        val maxColor = maxOf(red, green, blue)
+        if (maxColor < 8 && dark < 20) return null
+        return when {
+            red >= green && red >= blue && red >= 8 -> 'h'
+            blue >= red && blue >= green && blue >= 8 -> 'd'
+            green >= red && green >= blue && green >= 8 -> 'c'
+            dark >= 20 -> 's'
+            else -> null
+        }
+    }
+}
+
 private object PokerTextParser {
     private val numberPattern = Regex("[0-9][0-9, .]*")
 
-    fun summarize(text: String): String {
-        if (text.isBlank()) {
-            return "Не удалось прочитать текст.\nПроверьте, что стол хорошо виден."
-        }
-
+    fun summarize(text: String, cards: Map<String, PlayingCard> = emptyMap()): String {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val result = mutableListOf<String>()
-        val normalized = lines.map { line ->
-            line.lowercase(Locale.ROOT)
-                .replace('а', 'a')
-                .replace('н', 'h')
-                .replace('к', 'k')
-        }
+        val normalized = lines.map { line -> line.lowercase(Locale.ROOT) }
 
         if (normalized.any { Regex("\\bnlh\\b").containsMatchIn(it) }) {
             result += "Игра: NLH (техасский холдем)"
         }
-
         val potLineIndex = normalized.indexOfFirst { line ->
-            line.contains("pot") || line.contains("bank") || line.contains("bahk") || line.contains("банк")
+            line.contains("pot") || line.contains("bank") || line.contains("банк") || line.contains("bahk")
         }
         if (potLineIndex >= 0) {
-            val number = numberPattern.find(lines[potLineIndex])?.value
-                ?.replace(" ", "")?.replace(",", "")
+            val number = numberPattern.find(lines[potLineIndex])?.value?.replace(" ", "")?.replace(",", "")
             if (!number.isNullOrBlank()) result += "Банк: ${formatNumber(number)}"
         }
-
         val blindLineIndex = lines.indexOfFirst { raw ->
             val line = raw.lowercase(Locale.ROOT)
             line.contains("blind") || line.contains("блайнд") || line.contains("ante") || line.contains("анте")
         }
         if (blindLineIndex >= 0) {
-            val nums = numberPattern.findAll(lines[blindLineIndex])
-                .map { it.value.trim().replace(" ", "") }.toList()
-            if (nums.size >= 2) {
-                result += "Блайнды: ${formatNumber(nums[0])} / ${formatNumber(nums[1])}"
-            } else if (nums.isNotEmpty()) {
-                result += "Блайнды: ${formatNumber(nums[0])} (проверьте)"
-            }
+            val nums = numberPattern.findAll(lines[blindLineIndex]).map { it.value.trim().replace(" ", "") }.toList()
+            if (nums.size >= 2) result += "Блайнды: ${formatNumber(nums[0])} / ${formatNumber(nums[1])}"
         }
 
-        result += "Карты: пока не распознаны автоматически"
-        result += "Позиции: пока не определены"
-        result += "Перетащите окно, чтобы переместить его."
-        return result.distinct().take(6).joinToString("\n")
+        val heroCards = listOfNotNull(cards["Вы"])
+        val boardCards = (1..5).mapNotNull { cards["Стол $it"] }
+        result += if (heroCards.size == 2) "Ваши карты: ${heroCards.joinToString(" ") { it.label }}" else
+            "Ваши карты: ${heroCards.joinToString(" ") { it.label }} (распознано ${heroCards.size}/2)"
+        result += if (boardCards.isNotEmpty()) "Карты на столе: ${boardCards.joinToString(" ") { it.label }}" else
+            "Карты на столе: не распознаны (проверьте масштаб/ракурс)"
+        result += "Позиция: нижнее место — вы"
+        result += "Если карта определена неверно, сверяйте её вручную."
+        return result.take(7).joinToString("\n")
     }
 
     private fun formatNumber(value: String): String {
