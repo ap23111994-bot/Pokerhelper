@@ -8,6 +8,13 @@ package com.example.pokerhelper
  * Visual seat/button detection is a separate computer-vision stage.
  */
 object SeatPositionCalculator {
+    /** In the PPPoker layout used for calibration, the bottom seat is always Hero. */
+    const val HERO_SCREEN_ANCHOR = "BOTTOM"
+
+    /** Returns true when a detected seat is the fixed bottom/Hero seat. */
+    fun isHeroSeat(screenAnchor: String): Boolean =
+        screenAnchor.equals(HERO_SCREEN_ANCHOR, ignoreCase = true)
+
     fun positions(clockwiseFromButton: List<Int>): Map<Int, String> {
         require(clockwiseFromButton.size in 2..10) { "A table must have 2 to 10 occupied seats" }
         require(clockwiseFromButton.distinct().size == clockwiseFromButton.size) { "Seat IDs must be unique" }
