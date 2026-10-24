@@ -315,7 +315,7 @@ private object PokerCardImageReader {
             (screenHeight * h).toInt().coerceAtLeast(1).coerceAtMost(screenHeight - (screenHeight * y).toInt().coerceIn(0, screenHeight - 1))
         )
         val board = (0 until 5).map { i -> slot("Стол ${i + 1}", 0.195 + i * 0.12, 0.425, 0.116, 0.09) }
-        val hero = listOf(slot("Вы", 0.56, 0.76, 0.095, 0.08), slot("Вы", 0.615, 0.76, 0.105, 0.08))
+        val hero = listOf(slot("Ваша карта 1", 0.56, 0.76, 0.095, 0.08), slot("Ваша карта 2", 0.615, 0.76, 0.105, 0.08))
         return board + hero
     }
 
@@ -400,7 +400,7 @@ private object PokerTextParser {
             if (nums.size >= 2) result += "Блайнды: ${formatNumber(nums[0])} / ${formatNumber(nums[1])}"
         }
 
-        val heroCards = listOfNotNull(cards["Вы"])
+        val heroCards = listOfNotNull(cards["Ваша карта 1"], cards["Ваша карта 2"])
         val boardCards = (1..5).mapNotNull { cards["Стол $it"] }
         result += if (heroCards.size == 2) "Ваши карты: ${heroCards.joinToString(" ") { it.label }}" else
             "Ваши карты: ${heroCards.joinToString(" ") { it.label }} (распознано ${heroCards.size}/2)"
