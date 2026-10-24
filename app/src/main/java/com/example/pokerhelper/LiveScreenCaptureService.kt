@@ -94,6 +94,10 @@ class LiveScreenCaptureService : Service() {
     }
 
     private fun createCapturePipeline() {
+        // Show the overlay before attempting MediaProjection setup so failures are visible.
+        if (overlay == null) createOverlay()
+        updateOverlay("Подключаюсь к захвату экрана…")
+
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels.coerceAtLeast(1)
         val height = metrics.heightPixels.coerceAtLeast(1)
@@ -189,23 +193,33 @@ class LiveScreenCaptureService : Service() {
                         processing.set(false)
                     }
                 }
-            } catch (_: Exception) {
-                image.close()
+            } catch (e: Exception) {
+                try { image.close() } catch (_: Exception) {}
+                updateOverlay("Ошибка чтения экрана: ${e.javaClass.simpleName}. Проверьте разрешения и перезапустите распознавание.")
                 processing.set(false)
             }
         }, worker)
-        virtualDisplay = projection?.createVirtualDisplay(
-            "PokerHelperTrainingCapture",
-            width,
-            height,
-            density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            worker
-        )
-        if (overlay == null) createOverlay()
-        updateOverlay("Захват экрана включён. Откройте тренировочный стол.\nКарты и позиции пока не распознаются автоматически.")
+        try {
+            virtualDisplay = projection?.createVirtualDisplay(
+                "PokerHelperTrainingCapture",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface,
+                null,
+                worker
+            )
+            if (virtualDisplay == null) {
+                updateOverlay("Не удалось начать захват экрана. Остановите и запустите распознавание заново.")
+            } else {
+                updateOverlay("Захват экрана включён. Читаю стол…")
+            }
+        } catch (e: Exception) {
+            updateOverlay("Ошибка захвата экрана: ${e.javaClass.simpleName}. Запустите распознавание заново.")
+            try { imageReader?.close() } catch (_: Exception) {}
+            imageReader = null
+        }
     }
 
     private fun imageToBitmap(image: Image): Bitmap {
@@ -286,6 +300,7 @@ class LiveScreenCaptureService : Service() {
     private fun updateOverlay(message: String) {
         val safe = message.take(520)
         android.os.Handler(mainLooper).post {
+            if (overlay == null && Settings.canDrawOverlays(this)) createOverlay()
             overlay?.text = "ПОКЕРНЫЙ ПОМОЩНИК\n$safe"
         }
     }
