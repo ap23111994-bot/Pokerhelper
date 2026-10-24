@@ -123,6 +123,17 @@ class LiveScreenCaptureService : Service() {
                 val bitmap = imageToBitmap(image)
                 image.close()
                 val fullTextTask = recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                // The pot is shown in a fixed central region. OCR this crop separately so
+                // player stacks, table IDs and decorative numbers cannot become the pot value.
+                val potLeft = (bitmap.width * 0.30).toInt().coerceIn(0, bitmap.width - 1)
+                val potTop = (bitmap.height * 0.37).toInt().coerceIn(0, bitmap.height - 1)
+                val potWidth = (bitmap.width * 0.40).toInt().coerceAtMost(bitmap.width - potLeft).coerceAtLeast(1)
+                val potHeight = (bitmap.height * 0.075).toInt().coerceAtMost(bitmap.height - potTop).coerceAtLeast(1)
+                val potCrop = Bitmap.createBitmap(bitmap, potLeft, potTop, potWidth, potHeight)
+                val potEnlarged = Bitmap.createScaledBitmap(potCrop, potCrop.width * 2, potCrop.height * 2, true)
+                val potTask = recognizer.process(InputImage.fromBitmap(potEnlarged, 0))
+                potTask.addOnCompleteListener { potEnlarged.recycle(); potCrop.recycle() }
+
                 val cardSlots = PokerCardImageReader.slots(bitmap.width, bitmap.height)
                 val playerSlots = PokerPlayerImageReader.slots(bitmap.width, bitmap.height)
                 // OCR the upper-left rank corner at higher scale; full-card OCR often misses overlapped cards.
@@ -161,7 +172,7 @@ class LiveScreenCaptureService : Service() {
                     task.addOnCompleteListener { enlarged.recycle(); crop.recycle() }
                     task
                 }
-                val allTasks = mutableListOf<Task<*>>(fullTextTask)
+                val allTasks = mutableListOf<Task<*>>(fullTextTask, potTask)
                 allTasks.addAll(cardTasks)
                 allTasks.addAll(playerNameTasks)
                 allTasks.addAll(playerStackTasks)
@@ -187,7 +198,8 @@ class LiveScreenCaptureService : Service() {
                                 )?.let { playerSlots[index].label to it }
                             } else null
                         }.toMap()
-                        updateOverlay(PokerTextParser.summarize(fullText, recognizedCards, recognizedPlayers))
+                        val potText = if (potTask.isSuccessful) potTask.result?.text.orEmpty() else ""
+                        updateOverlay(PokerTextParser.summarize(fullText, recognizedCards, recognizedPlayers, potText))
                     } catch (_: Exception) {
                         updateOverlay("Не удалось распознать карты. Проверьте положение стола.")
                     } finally {
@@ -389,24 +401,28 @@ private object PokerCardImageReader {
             (screenHeight * h).toInt().coerceAtLeast(1).coerceAtMost(screenHeight - (screenHeight * y).toInt().coerceIn(0, screenHeight - 1))
         )
         val board = (0 until 5).map { i -> slot("Стол ${i + 1}", 0.195 + i * 0.12, 0.425, 0.116, 0.09) }
-        val hero = listOf(slot("Ваша карта 1", 0.56, 0.76, 0.095, 0.08), slot("Ваша карта 2", 0.615, 0.76, 0.105, 0.08))
+        // Hero cards overlap: the first slot must end before the second card covers its right side.
+        val hero = listOf(slot("Ваша карта 1", 0.56, 0.76, 0.076, 0.08), slot("Ваша карта 2", 0.615, 0.76, 0.105, 0.08))
         return board + hero
     }
 
     fun hasCard(bitmap: Bitmap, slot: Slot): Boolean {
-        var bright = 0
+        var cardFacePixels = 0
         var total = 0
-        val x0 = slot.left + slot.width / 8
-        val x1 = slot.left + slot.width * 7 / 8
-        val y0 = slot.top + slot.height / 10
-        val y1 = slot.top + slot.height * 9 / 10
+        val x0 = slot.left + slot.width / 10
+        val x1 = slot.left + slot.width * 9 / 10
+        val y0 = slot.top + slot.height / 12
+        val y1 = slot.top + slot.height * 11 / 12
         for (y in y0 until y1 step 2) for (x in x0 until x1 step 2) {
             val pixel = bitmap.getPixel(x, y)
             val r = AndroidColor.red(pixel); val g = AndroidColor.green(pixel); val b = AndroidColor.blue(pixel)
-            if (r > 190 && g > 190 && b > 180 && kotlin.math.abs(r - g) < 45 && kotlin.math.abs(g - b) < 55) bright++
+            val brightest = maxOf(r, g, b)
+            val darkest = minOf(r, g, b)
+            // Folded cards are dimmed by PPPoker, so don't require near-white pixels only.
+            if (brightest > 125 && brightest - darkest < 65) cardFacePixels++
             total++
         }
-        return total > 0 && bright.toDouble() / total > 0.24
+        return total > 0 && cardFacePixels.toDouble() / total > 0.16
     }
 
     fun parseCard(text: String, bitmap: Bitmap, slot: Slot): PlayingCard? {
@@ -509,7 +525,8 @@ private object PokerTextParser {
     fun summarize(
         text: String,
         cards: Map<String, PlayingCard> = emptyMap(),
-        players: Map<String, PokerPlayerImageReader.PlayerInfo> = emptyMap()
+        players: Map<String, PokerPlayerImageReader.PlayerInfo> = emptyMap(),
+        potText: String = ""
     ): String {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val result = mutableListOf<String>()
@@ -520,14 +537,17 @@ private object PokerTextParser {
         }
         // Read the value after the bank label; the chip stack often appears earlier
         // on the same OCR line and must not be mistaken for the pot.
+        val bankSource = potText.ifBlank { "" }
         val bankMatch = Regex(
             "(?i)(?:pot|bank|банк|bahk)\\s*[:：]?\\s*([0-9][0-9, .]*)"
-        ).find(text)
+        ).find(bankSource)
         val bankValue = bankMatch?.groupValues?.getOrNull(1)
             ?.filter { it.isDigit() }
             ?.takeIf { it.isNotEmpty() }
-        if (bankValue != null) {
-            result += "Банк: ${formatNumber(bankValue)}"
+        result += if (bankValue != null) {
+            "Банк: ${formatNumber(bankValue)}"
+        } else {
+            "Банк: не распознан — проверьте вручную"
         }
         val blindLineIndex = lines.indexOfFirst { raw ->
             val line = raw.lowercase(Locale.ROOT)
