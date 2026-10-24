@@ -47,6 +47,8 @@ class LiveScreenCaptureService : Service() {
     private var worker: Handler? = null
     private var overlay: TextView? = null
     private var overlayParams: LayoutParams? = null
+    private var overlayCreationAttempted = false
+    private var lastNotificationStatus: String? = null
     private val processing = AtomicBoolean(false)
     private var lastFrameAt = 0L
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
@@ -238,7 +240,12 @@ class LiveScreenCaptureService : Service() {
     }
 
     private fun createOverlay() {
-        if (!Settings.canDrawOverlays(this)) return
+        if (overlayCreationAttempted) return
+        overlayCreationAttempted = true
+        if (!Settings.canDrawOverlays(this)) {
+            notifyCaptureStatus("Нет разрешения на плавающее окно. Включите его в настройках Poker Helper.")
+            return
+        }
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val density = resources.displayMetrics.density
         val text = TextView(this).apply {
@@ -292,20 +299,33 @@ class LiveScreenCaptureService : Service() {
             wm.addView(text, params)
             overlay = text
             overlayParams = params
-        } catch (_: Exception) {
-            // OCR can still run with the persistent notification if overlay permission was revoked.
+        } catch (e: Exception) {
+            overlay = null
+            overlayParams = null
+            notifyCaptureStatus("Окно не открылось: ${e.javaClass.simpleName}. Проверьте разрешение поверх приложений.")
         }
     }
 
     private fun updateOverlay(message: String) {
         val safe = message.take(520)
         android.os.Handler(mainLooper).post {
-            if (overlay == null && Settings.canDrawOverlays(this)) createOverlay()
+            if (overlay == null && !overlayCreationAttempted) createOverlay()
             overlay?.text = "ПОКЕРНЫЙ ПОМОЩНИК\n$safe"
         }
     }
 
-    private fun buildNotification(): Notification {
+    private fun notifyCaptureStatus(message: String) {
+        if (lastNotificationStatus == message) return
+        lastNotificationStatus = message
+        try {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, buildNotification(message))
+        } catch (_: Exception) {
+            // The overlay or app status still provides feedback when notifications are unavailable.
+        }
+    }
+
+    private fun buildNotification(statusText: String = "Экран записывается. Нажмите «Остановить» в приложении, чтобы завершить."): Notification {
         val channelId = "poker_helper_capture"
         if (Build.VERSION.SDK_INT >= 26) {
             val channel = NotificationChannel(channelId, "Распознавание экрана — Покерный помощник", NotificationManager.IMPORTANCE_LOW)
@@ -314,7 +334,7 @@ class LiveScreenCaptureService : Service() {
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentTitle("Распознавание стола — Покерный помощник")
-            .setContentText("Экран записывается. Нажмите «Остановить» в приложении, чтобы завершить.")
+            .setContentText(statusText)
             .setOngoing(true)
             .build()
     }
