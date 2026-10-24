@@ -184,6 +184,19 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 private fun AnalysisCard(r: HandAnalysis) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("ЧТО ДЕЛАТЬ", color = Gold, fontWeight = FontWeight.Bold)
+            Text(
+                r.recommendation.russianLabel,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Black,
+                color = when (r.recommendation) {
+                    PokerAction.FOLD -> Color(0xFFFF7777)
+                    PokerAction.CALL -> Color(0xFFFFD166)
+                    PokerAction.RAISE, PokerAction.BET -> Color(0xFF83D6A2)
+                    PokerAction.CHECK -> Color(0xFF9CCBFF)
+                }
+            )
+            Text(r.recommendationReason, color = Muted, fontSize = 13.sp)
             Text("РЕЗУЛЬТАТ РАСЧЁТА", color = Gold, fontWeight = FontWeight.Bold)
             Text("Шанс на победу: ${"%.1f".format(Locale.US, r.equity * 100)}%", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             r.handName?.let { Text("Ваша комбинация: ${translateHandName(it)}", color = Muted) }
@@ -191,6 +204,7 @@ private fun AnalysisCard(r: HandAnalysis) {
             Text("Ожидаемый результат колла: ${if (r.expectedValue >= 0) "+" else ""}${"%.2f".format(Locale.US, r.expectedValue)}")
             Text("Карты для улучшения комбинации: ${r.outs}", color = Muted)
             Text("Оценка по ${r.iterations} симуляциям против случайных карт", color = Muted, fontSize = 11.sp)
+            Text("Совет приблизительный: не учитывает диапазон соперника, позицию и действия других игроков.", color = Muted, fontSize = 11.sp)
         }
     }
 }
