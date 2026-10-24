@@ -30,7 +30,6 @@ import androidx.core.app.NotificationCompat
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.Locale
@@ -213,12 +212,12 @@ class LiveScreenCaptureService : Service() {
             setTextColor(0xFFF5F7F6.toInt())
             setBackgroundColor(0xEE14211D.toInt())
             setPadding((14 * density).toInt(), (10 * density).toInt(), (14 * density).toInt(), (10 * density).toInt())
-            maxLines = 8
+            maxLines = 12
             setLineSpacing(2f, 1.0f)
             elevation = 12f * density
         }
         val params = LayoutParams(
-            (resources.displayMetrics.widthPixels * 0.58f).toInt(),
+            (resources.displayMetrics.widthPixels * 0.68f).toInt(),
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -496,7 +495,7 @@ private object PokerTextParser {
         }
         result += "Позиция: нижнее место — вы"
         result += "Проверьте имена и стеки: OCR может ошибаться."
-        return result.take(9).joinToString("\\n")
+        return result.take(9).joinToString("\n")
     }
 
     private fun formatNumber(value: String): String {
