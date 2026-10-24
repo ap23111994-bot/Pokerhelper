@@ -79,8 +79,8 @@ private fun PokerHelperApp() {
     MaterialTheme(colorScheme = darkColorScheme(primary = Gold, secondary = Color(0xFF8DC8A8), background = Felt, surface = Panel, onPrimary = Felt)) {
         Surface(Modifier.fillMaxSize(), color = Felt) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("POKER HELPER", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Gold)
-                Text("Hand analysis · Tournament clock", color = Muted, fontSize = 13.sp)
+                Text("ПОКЕРНЫЙ ПОМОЩНИК", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Gold)
+                Text("Анализ раздачи · Таймер турнира", color = Muted, fontSize = 13.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = {
@@ -95,7 +95,7 @@ private fun PokerHelperApp() {
                             }
                         },
                         modifier = Modifier.weight(1f)
-                    ) { Text("Start live OCR") }
+                    ) { Text("Начать распознавание") }
                     OutlinedButton(
                         onClick = {
                             context.startService(
@@ -104,30 +104,30 @@ private fun PokerHelperApp() {
                             )
                         },
                         modifier = Modifier.weight(1f)
-                    ) { Text("Stop capture") }
+                    ) { Text("Остановить") }
                 }
                 Text(
-                    "Live OCR reads visible text. Card faces and seat positions still need a calibrated visual detector.",
+                    "Приложение считывает текст с экрана. Автоматическое распознавание карт и позиций игроков пока находится в разработке.",
                     color = Muted,
                     fontSize = 11.sp
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { page = 0 }, modifier = Modifier.weight(1f)) { Text("Hand analysis") }
-                    OutlinedButton(onClick = { page = 1 }, modifier = Modifier.weight(1f)) { Text("Tournament") }
+                    Button(onClick = { page = 0 }, modifier = Modifier.weight(1f)) { Text("Раздача") }
+                    OutlinedButton(onClick = { page = 1 }, modifier = Modifier.weight(1f)) { Text("Турнир") }
                 }
                 if (page == 0) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text("HERO", color = Gold, fontWeight = FontWeight.Bold)
+                        Text("ВАШИ КАРТЫ", color = Gold, fontWeight = FontWeight.Bold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            hero.forEachIndexed { i, card -> CardSlot(card?.label ?: "Choose", card != null, Modifier.weight(1f)) { picker = "hero" to i } }
+                            hero.forEachIndexed { i, card -> CardSlot(card?.label ?: "Выбрать", card != null, Modifier.weight(1f)) { picker = "hero" to i } }
                         }
-                        Text("COMMUNITY CARDS", color = Gold, fontWeight = FontWeight.Bold)
+                        Text("ОБЩИЕ КАРТЫ НА СТОЛЕ", color = Gold, fontWeight = FontWeight.Bold)
                         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             board.forEachIndexed { i, card -> CardSlot(card?.label ?: "—", card != null, Modifier.weight(1f)) { picker = "board" to i } }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            NumberField("Pot", pot, { pot = it }, Modifier.weight(1f))
-                            NumberField("Call", call, { call = it }, Modifier.weight(1f))
+                            NumberField("Банк", pot, { pot = it }, Modifier.weight(1f))
+                            NumberField("Сколько нужно добавить", call, { call = it }, Modifier.weight(1f))
                         }
                         Button(onClick = {
                             val h = hero.filterNotNull(); val b = board.filterNotNull()
@@ -139,9 +139,9 @@ private fun PokerHelperApp() {
                                     busy = false
                                 }
                             } else result = null
-                        }, modifier = Modifier.fillMaxWidth(), enabled = !busy) { Text(if (busy) "Calculating…" else "Analyze hand") }
+                        }, modifier = Modifier.fillMaxWidth(), enabled = !busy) { Text(if (busy) "Считаю…" else "Рассчитать шансы") }
                         result?.let { AnalysisCard(it) }
-                        if (result == null) Text("Choose both Hero cards and at least the flop.", color = Muted, fontSize = 12.sp)
+                        if (result == null) Text("Выберите 2 свои карты и минимум 3 общие карты на столе.", color = Muted, fontSize = 12.sp)
                     }
                 } else TournamentPanel()
             }
@@ -182,20 +182,20 @@ private fun NumberField(label: String, value: String, onChange: (String) -> Unit
 private fun AnalysisCard(r: HandAnalysis) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("ANALYSIS", color = Gold, fontWeight = FontWeight.Bold)
-            Text("Estimated equity: ${"%.1f".format(Locale.US, r.equity * 100)}%", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            r.handName?.let { Text("Current hand: $it", color = Muted) }
-            Text("Pot odds: ${"%.1f".format(Locale.US, r.potOdds * 100)}%")
-            Text("Call EV: ${if (r.expectedValue >= 0) "+" else ""}${"%.2f".format(Locale.US, r.expectedValue)}")
-            Text("Outs to improve: ${r.outs}", color = Muted)
-            Text("Monte Carlo: ${r.iterations} trials vs random hand", color = Muted, fontSize = 11.sp)
+            Text("РЕЗУЛЬТАТ РАСЧЁТА", color = Gold, fontWeight = FontWeight.Bold)
+            Text("Шанс на победу: ${"%.1f".format(Locale.US, r.equity * 100)}%", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            r.handName?.let { Text("Ваша комбинация: ${translateHandName(it)}", color = Muted) }
+            Text("Необходимая доля банка для колла: ${"%.1f".format(Locale.US, r.potOdds * 100)}%")
+            Text("Ожидаемый результат колла: ${if (r.expectedValue >= 0) "+" else ""}${"%.2f".format(Locale.US, r.expectedValue)}")
+            Text("Карты для улучшения комбинации: ${r.outs}", color = Muted)
+            Text("Оценка по ${r.iterations} симуляциям против случайных карт", color = Muted, fontSize = 11.sp)
         }
     }
 }
 
 @Composable
 private fun CardPickerDialog(used: Set<PlayingCard>, onDismiss: () -> Unit, onSelect: (PlayingCard) -> Unit, onClear: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Choose a card") },
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Выберите карту") },
         text = {
             LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.height(340.dp)) {
                 items(PlayingCard.deck) { card ->
@@ -209,8 +209,8 @@ private fun CardPickerDialog(used: Set<PlayingCard>, onDismiss: () -> Unit, onSe
                 }
             }
         },
-        confirmButton = { Button(onClick = onClear) { Text("Clear slot") } },
-        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } })
+        confirmButton = { Button(onClick = onClear) { Text("Убрать карту") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Отмена") } })
 }
 
 @Composable
@@ -232,27 +232,40 @@ private fun TournamentPanel() {
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("BLIND LEVEL", color = Gold, fontWeight = FontWeight.Bold)
+        Text("УРОВЕНЬ БЛАЙНДОВ", color = Gold, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField("Small blind", sb, { sb = it }, Modifier.weight(1f))
-            NumberField("Big blind", bb, { bb = it }, Modifier.weight(1f))
+            NumberField("Малый блайнд", sb, { sb = it }, Modifier.weight(1f))
+            NumberField("Большой блайнд", bb, { bb = it }, Modifier.weight(1f))
         }
-        NumberField("Minutes per level", minutes, { minutes = it; if (!running) seconds = (it.toIntOrNull()?.coerceIn(1, 180) ?: 10) * 60 }, Modifier.fillMaxWidth())
+        NumberField("Длительность уровня (мин.)", minutes, { minutes = it; if (!running) seconds = (it.toIntOrNull()?.coerceIn(1, 180) ?: 10) * 60 }, Modifier.fillMaxWidth())
         Card(colors = CardDefaults.cardColors(containerColor = Panel), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("CURRENT BLINDS", color = Muted, fontSize = 12.sp)
+                Text("ТЕКУЩИЕ БЛАЙНДЫ", color = Muted, fontSize = 12.sp)
                 Text("${sb.ifBlank { "10" }} / ${bb.ifBlank { "20" }}", color = Gold, fontSize = 30.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
                 Text("%02d:%02d".format(seconds / 60, seconds % 60), fontSize = 42.sp, fontWeight = FontWeight.Bold)
-                Text(if (running) "Timer running" else "Timer paused", color = Muted, fontSize = 12.sp)
+                Text(if (running) "Таймер запущен" else "Таймер на паузе", color = Muted, fontSize = 12.sp)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { running = !running }, modifier = Modifier.weight(1f)) { Text(if (running) "Pause" else "Start") }
-            OutlinedButton(onClick = { running = false; seconds = (minutes.toIntOrNull()?.coerceIn(1, 180) ?: 10) * 60 }, modifier = Modifier.weight(1f)) { Text("Reset level") }
+            Button(onClick = { running = !running }, modifier = Modifier.weight(1f)) { Text(if (running) "Пауза" else "Старт") }
+            OutlinedButton(onClick = { running = false; seconds = (minutes.toIntOrNull()?.coerceIn(1, 180) ?: 10) * 60 }, modifier = Modifier.weight(1f)) { Text("Сбросить уровень") }
         }
-        Text("Blinds double automatically when the level timer reaches zero.", color = Muted, fontSize = 12.sp)
+        Text("Когда таймер дойдёт до нуля, малый и большой блайнды автоматически удвоятся.", color = Muted, fontSize = 12.sp)
     }
+}
+
+private fun translateHandName(name: String): String = when (name) {
+    "High card" -> "старшая карта"
+    "One pair" -> "одна пара"
+    "Two pair" -> "две пары"
+    "Three of a kind" -> "сет / тройка"
+    "Straight" -> "стрит"
+    "Flush" -> "флеш"
+    "Full house" -> "фулл-хаус"
+    "Four of a kind" -> "каре"
+    "Straight flush" -> "стрит-флеш"
+    else -> name
 }
 
 private fun formatBlind(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else "%.2f".format(Locale.US, value)
