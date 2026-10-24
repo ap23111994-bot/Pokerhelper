@@ -68,7 +68,7 @@ object PokerEngine {
         require(pot >= 0 && callAmount >= 0 && iterations > 0)
         val odds = if (pot + callAmount > 0) callAmount / (pot + callAmount) else 0.0
         val deck = PlayingCard.deck.filterNot { it in hero || it in board }
-        val random = randomSeed?.let { java.util.Random(it) } ?: java.util.Random()
+        val random = randomSeed?.let { kotlin.random.Random(it) } ?: kotlin.random.Random.Default
         var wins = 0; var ties = 0
         repeat(iterations) {
             val shuffled = deck.shuffled(random)
