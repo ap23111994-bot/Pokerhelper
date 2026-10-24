@@ -69,7 +69,7 @@ class LiveScreenCaptureService : Service() {
             intent?.getParcelableExtra(EXTRA_RESULT_DATA)
         }
         if (resultCode == 0 || data == null) {
-            updateOverlay("Screen capture permission was not received.")
+            updateOverlay("Не получено разрешение на захват экрана.")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -116,7 +116,7 @@ class LiveScreenCaptureService : Service() {
                         val summary = PokerTextParser.summarize(result.text)
                         updateOverlay(summary)
                     }
-                    .addOnFailureListener { updateOverlay("OCR temporarily unavailable. Retrying…") }
+                    .addOnFailureListener { updateOverlay("Не удалось распознать текст. Повторная попытка…") }
                     .addOnCompleteListener {
                         bitmap.recycle()
                         processing.set(false)
@@ -137,7 +137,7 @@ class LiveScreenCaptureService : Service() {
             worker
         )
         if (overlay == null) createOverlay()
-        updateOverlay("Live OCR active. Open your training table.\nCards and seat positions require visual calibration.")
+        updateOverlay("Захват экрана включён. Откройте тренировочный стол.\nКарты и позиции пока не распознаются автоматически.")
     }
 
     private fun imageToBitmap(image: Image): Bitmap {
@@ -159,7 +159,7 @@ class LiveScreenCaptureService : Service() {
         if (!Settings.canDrawOverlays(this)) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val text = TextView(this).apply {
-            text = "Poker Helper\nWaiting for screen…"
+            text = "Покерный помощник\nОжидание изображения…"
             textSize = 12f
             setTextColor(0xFFFFFFFF.toInt())
             setBackgroundColor(0xDD14211D.toInt())
@@ -188,20 +188,20 @@ class LiveScreenCaptureService : Service() {
     private fun updateOverlay(message: String) {
         val safe = message.take(650)
         android.os.Handler(mainLooper).post {
-            overlay?.text = "POKER HELPER · LIVE\n$safe"
+            overlay?.text = "ПОКЕРНЫЙ ПОМОЩНИК · ЭКРАН\n$safe"
         }
     }
 
     private fun buildNotification(): Notification {
         val channelId = "poker_helper_capture"
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(channelId, "Poker Helper screen analysis", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "Распознавание экрана — Покерный помощник", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentTitle("Poker Helper screen analysis")
-            .setContentText("Screen capture is active. Tap Stop in Poker Helper to end it.")
+            .setContentText("Экран записывается. Нажмите «Остановить» в приложении, чтобы завершить.")
             .setOngoing(true)
             .build()
     }
@@ -246,7 +246,7 @@ class LiveScreenCaptureService : Service() {
 
 private object PokerTextParser {
     fun summarize(text: String): String {
-        if (text.isBlank()) return "Screen captured; no readable text detected."
+        if (text.isBlank()) return "Экран получен, но текст не распознан."
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val patterns = listOf(
             Regex("(?i)\\b(pot|bank)\\b.*"),
@@ -254,7 +254,7 @@ private object PokerTextParser {
             Regex("(?i)\\b(button|dealer|btn|small blind|big blind|sb|bb|utg|hijack|cut.?off|co)\\b.*")
         )
         val matches = lines.filter { line -> patterns.any { it.containsMatchIn(line) } }
-        val heading = if (matches.isNotEmpty()) "Possible table text:" else "Recognized screen text:"
+        val heading = if (matches.isNotEmpty()) "Возможные данные стола:" else "Распознанный текст:"
         return (listOf(heading) + (if (matches.isNotEmpty()) matches else lines).take(8)).joinToString("\n")
     }
 }
