@@ -119,7 +119,18 @@ class LiveScreenCaptureService : Service() {
                 image.close()
                 val fullTextTask = recognizer.process(InputImage.fromBitmap(bitmap, 0))
                 val cardSlots = PokerCardImageReader.slots(bitmap.width, bitmap.height)
+                val playerSlots = PokerPlayerImageReader.slots(bitmap.width, bitmap.height)
                 val cardTasks = cardSlots.map { slot ->
+                    val crop = Bitmap.createBitmap(bitmap, slot.left, slot.top, slot.width, slot.height)
+                    val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 2, crop.height * 2, true)
+                    val task = recognizer.process(InputImage.fromBitmap(enlarged, 0))
+                    task.addOnCompleteListener {
+                        enlarged.recycle()
+                        crop.recycle()
+                    }
+                    task
+                }
+                val playerTasks = playerSlots.map { slot ->
                     val crop = Bitmap.createBitmap(bitmap, slot.left, slot.top, slot.width, slot.height)
                     val enlarged = Bitmap.createScaledBitmap(crop, crop.width * 2, crop.height * 2, true)
                     val task = recognizer.process(InputImage.fromBitmap(enlarged, 0))
@@ -131,6 +142,7 @@ class LiveScreenCaptureService : Service() {
                 }
                 val allTasks = mutableListOf<Task<*>>(fullTextTask)
                 allTasks.addAll(cardTasks)
+                allTasks.addAll(playerTasks)
                 Tasks.whenAllComplete(allTasks).addOnCompleteListener {
                     try {
                         val fullText = if (fullTextTask.isSuccessful) fullTextTask.result?.text.orEmpty() else ""
@@ -142,7 +154,14 @@ class LiveScreenCaptureService : Service() {
                                     ?.let { slot.label to it }
                             } else null
                         }.toMap()
-                        updateOverlay(PokerTextParser.summarize(fullText, recognizedCards))
+                        val recognizedPlayers = playerSlots.indices.mapNotNull { index ->
+                            val task = playerTasks[index]
+                            if (task.isSuccessful) {
+                                PokerPlayerImageReader.parse(playerSlots[index], task.result?.text.orEmpty())
+                                    ?.let { playerSlots[index].label to it }
+                            } else null
+                        }.toMap()
+                        updateOverlay(PokerTextParser.summarize(fullText, recognizedCards, recognizedPlayers))
                     } catch (_: Exception) {
                         updateOverlay("Не удалось распознать карты. Проверьте положение стола.")
                     } finally {
@@ -373,10 +392,69 @@ private object PokerCardImageReader {
     }
 }
 
+private object PokerPlayerImageReader {
+    data class Slot(val label: String, val left: Int, val top: Int, val width: Int, val height: Int)
+
+    data class PlayerInfo(val name: String, val stack: String?, val status: String)
+
+    fun slots(screenWidth: Int, screenHeight: Int): List<Slot> {
+        fun slot(label: String, x: Double, y: Double, w: Double, h: Double) = Slot(
+            label,
+            (screenWidth * x).toInt().coerceIn(0, screenWidth - 1),
+            (screenHeight * y).toInt().coerceIn(0, screenHeight - 1),
+            (screenWidth * w).toInt().coerceAtLeast(1).coerceAtMost(screenWidth - (screenWidth * x).toInt().coerceIn(0, screenWidth - 1)),
+            (screenHeight * h).toInt().coerceAtLeast(1).coerceAtMost(screenHeight - (screenHeight * y).toInt().coerceIn(0, screenHeight - 1))
+        )
+        // Calibrated for the portrait PPPoker layout shown in the user's screenshots.
+        return listOf(
+            slot("Сверху слева", 0.015, 0.392, 0.19, 0.048),
+            slot("Сверху справа", 0.80, 0.392, 0.19, 0.048),
+            slot("Слева", 0.015, 0.632, 0.19, 0.048),
+            slot("Справа", 0.81, 0.595, 0.17, 0.045),
+            slot("Вы (снизу)", 0.405, 0.823, 0.19, 0.047)
+        )
+    }
+
+    fun parse(slot: Slot, text: String): PlayerInfo? {
+        val cleanLines = text.lines().map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (cleanLines.isEmpty()) return null
+        val all = cleanLines.joinToString(" ").lowercase(Locale.ROOT)
+        if (all.contains("empty") || all.contains("пусто")) return PlayerInfo("Пустое место", null, "ПУСТО")
+        if (all.contains("вне игры") || all.contains("fold")) {
+            val name = cleanLines.firstOrNull { it.any(Char::isLetter) && !it.contains("Fold", true) && !it.contains("Фолд", true) }
+                ?: slot.label
+            val stack = findStack(cleanLines)
+            return PlayerInfo(name.take(22), stack, "ПАС")
+        }
+        val stack = findStack(cleanLines)
+        val name = cleanLines.firstOrNull { line ->
+            line.any(Char::isLetter) && findStack(listOf(line)) == null &&
+                !line.contains("NLH", true) && !line.contains("bank", true) &&
+                !line.contains("блайнд", true)
+        }?.replace(Regex("\\s+"), " ")?.take(22) ?: return null
+        return PlayerInfo(name, stack, "В ИГРЕ")
+    }
+
+    private fun findStack(lines: List<String>): String? {
+        val pattern = Regex("(?<![A-Za-z])\\d[\\d, .]{1,12}\\d(?![A-Za-z])")
+        return lines.asSequence().flatMap { pattern.findAll(it).map { match -> match.value.trim() } }
+            .map { it.replace(" ", "").replace(",", "") }
+            .firstOrNull { value -> value.filter(Char::isDigit).length >= 2 }
+            ?.let { value ->
+                val digits = value.filter(Char::isDigit)
+                digits.reversed().chunked(3).joinToString(" ").reversed()
+            }
+    }
+}
+
 private object PokerTextParser {
     private val numberPattern = Regex("[0-9][0-9, .]*")
 
-    fun summarize(text: String, cards: Map<String, PlayingCard> = emptyMap()): String {
+    fun summarize(
+        text: String,
+        cards: Map<String, PlayingCard> = emptyMap(),
+        players: Map<String, PokerPlayerImageReader.PlayerInfo> = emptyMap()
+    ): String {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val result = mutableListOf<String>()
         val normalized = lines.map { line -> line.lowercase(Locale.ROOT) }
@@ -406,9 +484,19 @@ private object PokerTextParser {
             "Ваши карты: ${heroCards.joinToString(" ") { it.label }} (распознано ${heroCards.size}/2)"
         result += if (boardCards.isNotEmpty()) "Карты на столе: ${boardCards.joinToString(" ") { it.label }}" else
             "Карты на столе: не распознаны (проверьте масштаб/ракурс)"
+
+        if (players.isNotEmpty()) {
+            result += "ИГРОКИ:"
+            players.entries.forEach { (seat, player) ->
+                val stackText = player.stack?.let { " · стек $it" } ?: ""
+                result += "$seat: ${player.name}$stackText · ${player.status}"
+            }
+        } else {
+            result += "Игроки: распознавание не удалось"
+        }
         result += "Позиция: нижнее место — вы"
-        result += "Если карта определена неверно, сверяйте её вручную."
-        return result.take(7).joinToString("\n")
+        result += "Проверьте имена и стеки: OCR может ошибаться."
+        return result.take(9).joinToString("\\n")
     }
 
     private fun formatNumber(value: String): String {
