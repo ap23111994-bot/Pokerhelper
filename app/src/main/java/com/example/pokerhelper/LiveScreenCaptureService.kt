@@ -233,7 +233,7 @@ class LiveScreenCaptureService : Service() {
             setTextColor(0xFFF5F7F6.toInt())
             setBackgroundColor(0xEE14211D.toInt())
             setPadding((14 * density).toInt(), (10 * density).toInt(), (14 * density).toInt(), (10 * density).toInt())
-            maxLines = 12
+            maxLines = 14
             setLineSpacing(2f, 1.0f)
             elevation = 12f * density
         }
@@ -453,7 +453,7 @@ private object PokerPlayerImageReader {
                 !line.contains("NLH", true) && !line.contains("bank", true) &&
                 !line.contains("блайнд", true)
         }?.replace(Regex("\\s+"), " ")?.take(22) ?: return null
-        return PlayerInfo(name, stack, "В ИГРЕ")
+        return PlayerInfo(name, stack, "МЕСТО ЗАНЯТО")
     }
 
     private fun findStack(lines: List<String>): String? {
@@ -525,7 +525,7 @@ private object PokerTextParser {
         if (heroCards.size != 2 || boardCards.size !in listOf(0, 3, 4, 5)) result += "Рекомендация: недоступна — сначала проверьте карты."
         result += "Позиция: нижнее место — вы"
         result += "Проверьте имена и стеки: OCR может ошибаться."
-        return result.take(9).joinToString("\n")
+        return result.take(13).joinToString("\n")
     }
 
     private fun formatNumber(value: String): String {
