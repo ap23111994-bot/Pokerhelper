@@ -28,4 +28,21 @@ class PokerEngineTest {
         val r = PokerEngine.analyze(listOf(c(14, 's'), c(14, 'h')), listOf(c(2, 'd'), c(7, 'c'), c(9, 's')), 100.0, 25.0, 100, 42L)
         assertEquals(0.2, r.potOdds, 0.0001); assertTrue(r.equity in 0.0..1.0)
     }
+    @Test fun recommendationFoldsWhenEquityBelowPotOdds() {
+        assertEquals(PokerAction.FOLD, PokerEngine.recommendAction(0.15, 0.30, 100.0, 30.0))
+    }
+
+    @Test fun recommendationCallsWithEnoughEquityButNoRaiseEdge() {
+        assertEquals(PokerAction.CALL, PokerEngine.recommendAction(0.42, 0.30, 100.0, 30.0))
+    }
+
+    @Test fun recommendationRaisesWithStrongEquityAndSmallCall() {
+        assertEquals(PokerAction.RAISE, PokerEngine.recommendAction(0.82, 0.20, 100.0, 20.0))
+    }
+
+    @Test fun noCallAmountProducesCheckOrBet() {
+        assertEquals(PokerAction.CHECK, PokerEngine.recommendAction(0.35, 0.0, 100.0, 0.0))
+        assertEquals(PokerAction.BET, PokerEngine.recommendAction(0.75, 0.0, 100.0, 0.0))
+    }
+
 }
