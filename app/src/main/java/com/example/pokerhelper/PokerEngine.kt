@@ -21,7 +21,24 @@ data class HandValue(val category: Int, val kickers: List<Int>) : Comparable<Han
     }
     val name get() = listOf("High card", "One pair", "Two pair", "Three of a kind", "Straight", "Flush", "Full house", "Four of a kind", "Straight flush")[category]
 }
-data class HandAnalysis(val equity: Double, val potOdds: Double, val expectedValue: Double, val outs: Int, val handName: String?, val iterations: Int)
+enum class PokerAction(val russianLabel: String) {
+    FOLD("ПАС (FOLD)"),
+    CALL("КОЛЛ (CALL)"),
+    RAISE("РЕЙЗ (RAISE)"),
+    CHECK("ЧЕК"),
+    BET("БЕТ")
+}
+
+data class HandAnalysis(
+    val equity: Double,
+    val potOdds: Double,
+    val expectedValue: Double,
+    val outs: Int,
+    val handName: String?,
+    val iterations: Int,
+    val recommendation: PokerAction,
+    val recommendationReason: String
+)
 
 object PokerEngine {
     fun evaluateFive(cards: List<PlayingCard>): HandValue {
@@ -84,7 +101,37 @@ object PokerEngine {
             val known = (hero + board).toSet()
             PlayingCard.deck.filterNot { it in known }.count { bestHand(hero + board + it) > current }
         } else 0
-        return HandAnalysis(equity, odds, equity * (pot + callAmount) - callAmount, outs,
-            if (board.size >= 3) bestHand(hero + board).name else null, iterations)
+        val action = recommendAction(equity, odds, pot, callAmount)
+        val reason = when (action) {
+            PokerAction.FOLD -> "Эквити ниже требуемых шансов банка с небольшим запасом."
+            PokerAction.CALL -> "Эквити достаточно для колла, но перевес недостаточно велик для уверенного рейза."
+            PokerAction.RAISE -> "Высокое эквити и относительно небольшая цена продолжения позволяют рассмотреть рейз."
+            PokerAction.CHECK -> "Ставки для колла нет. Если соперник не поставил, можно прочекать."
+            PokerAction.BET -> "Ставки для колла нет. При таком эквити можно рассмотреть ставку, если до вас все прочекали."
+        }
+        return HandAnalysis(
+            equity, odds, equity * (pot + callAmount) - callAmount, outs,
+            if (board.size >= 3) bestHand(hero + board).name else null,
+            iterations, action, reason
+        )
+    }
+
+    /**
+     * Простая эвристика для тренировки, не покерный солвер.
+     * Эквити оценивается против случайной руки и не учитывает диапазоны,
+     * позицию, число соперников и глубину стеков.
+     */
+    fun recommendAction(equity: Double, potOdds: Double, pot: Double, callAmount: Double): PokerAction {
+        require(equity in 0.0..1.0)
+        require(potOdds in 0.0..1.0)
+        require(pot >= 0.0 && callAmount >= 0.0)
+        if (callAmount <= 0.0) {
+            return if (equity >= 0.60) PokerAction.BET else PokerAction.CHECK
+        }
+        if (equity < potOdds + 0.02) return PokerAction.FOLD
+        if (equity >= maxOf(0.68, potOdds + 0.22) && callAmount <= pot * 0.5) {
+            return PokerAction.RAISE
+        }
+        return PokerAction.CALL
     }
 }
