@@ -20,6 +20,8 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import android.widget.TextView
@@ -158,24 +160,54 @@ class LiveScreenCaptureService : Service() {
     private fun createOverlay() {
         if (!Settings.canDrawOverlays(this)) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val density = resources.displayMetrics.density
         val text = TextView(this).apply {
-            text = "Покерный помощник\nОжидание изображения…"
+            text = "ПОКЕРНЫЙ ПОМОЩНИК\nПодключаюсь к экрану…"
             textSize = 12f
-            setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(0xDD14211D.toInt())
-            setPadding(18, 14, 18, 14)
+            setTextColor(0xFFF5F7F6.toInt())
+            setBackgroundColor(0xEE14211D.toInt())
+            setPadding((14 * density).toInt(), (10 * density).toInt(), (14 * density).toInt(), (10 * density).toInt())
+            maxLines = 8
+            setLineSpacing(2f, 1.0f)
+            elevation = 12f * density
         }
         val params = LayoutParams(
-            (resources.displayMetrics.widthPixels * 0.72f).toInt(),
+            (resources.displayMetrics.widthPixels * 0.58f).toInt(),
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            x = 12
-            y = (resources.displayMetrics.density * 90).toInt()
+            gravity = Gravity.TOP or Gravity.START
+            x = (10 * density).toInt()
+            y = (64 * density).toInt()
         }
+        text.setOnTouchListener(object : View.OnTouchListener {
+            private var startX = 0
+            private var startY = 0
+            private var touchX = 0f
+            private var touchY = 0f
+
+            override fun onTouch(view: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startX = params.x
+                        startY = params.y
+                        touchX = event.rawX
+                        touchY = event.rawY
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = (startX + event.rawX - touchX).toInt().coerceAtLeast(0)
+                        params.y = (startY + event.rawY - touchY).toInt().coerceAtLeast(0)
+                        try { wm.updateViewLayout(text, params) } catch (_: Exception) {}
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> return true
+                }
+                return false
+            }
+        })
         try {
             wm.addView(text, params)
             overlay = text
@@ -186,9 +218,9 @@ class LiveScreenCaptureService : Service() {
     }
 
     private fun updateOverlay(message: String) {
-        val safe = message.take(650)
+        val safe = message.take(520)
         android.os.Handler(mainLooper).post {
-            overlay?.text = "ПОКЕРНЫЙ ПОМОЩНИК · ЭКРАН\n$safe"
+            overlay?.text = "ПОКЕРНЫЙ ПОМОЩНИК\n$safe"
         }
     }
 
@@ -200,7 +232,7 @@ class LiveScreenCaptureService : Service() {
         }
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("Poker Helper screen analysis")
+            .setContentTitle("Распознавание стола — Покерный помощник")
             .setContentText("Экран записывается. Нажмите «Остановить» в приложении, чтобы завершить.")
             .setOngoing(true)
             .build()
@@ -245,16 +277,57 @@ class LiveScreenCaptureService : Service() {
 }
 
 private object PokerTextParser {
+    private val numberPattern = Regex("[0-9][0-9, .]*")
+
     fun summarize(text: String): String {
-        if (text.isBlank()) return "Экран получен, но текст не распознан."
+        if (text.isBlank()) {
+            return "Не удалось прочитать текст.\nПроверьте, что стол хорошо виден."
+        }
+
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-        val patterns = listOf(
-            Regex("(?i)\\b(pot|bank)\\b.*"),
-            Regex("(?i)\\b(call|bet|raise|all.?in|blind|ante)\\b.*"),
-            Regex("(?i)\\b(button|dealer|btn|small blind|big blind|sb|bb|utg|hijack|cut.?off|co)\\b.*")
-        )
-        val matches = lines.filter { line -> patterns.any { it.containsMatchIn(line) } }
-        val heading = if (matches.isNotEmpty()) "Возможные данные стола:" else "Распознанный текст:"
-        return (listOf(heading) + (if (matches.isNotEmpty()) matches else lines).take(8)).joinToString("\n")
+        val result = mutableListOf<String>()
+        val normalized = lines.map { line ->
+            line.lowercase(Locale.ROOT)
+                .replace('а', 'a')
+                .replace('н', 'h')
+                .replace('к', 'k')
+        }
+
+        if (normalized.any { Regex("\\bnlh\\b").containsMatchIn(it) }) {
+            result += "Игра: NLH (техасский холдем)"
+        }
+
+        val potLineIndex = normalized.indexOfFirst { line ->
+            line.contains("pot") || line.contains("bank") || line.contains("bahk") || line.contains("банк")
+        }
+        if (potLineIndex >= 0) {
+            val number = numberPattern.find(lines[potLineIndex])?.value
+                ?.replace(" ", "")?.replace(",", "")
+            if (!number.isNullOrBlank()) result += "Банк: ${formatNumber(number)}"
+        }
+
+        val blindLineIndex = normalized.indexOfFirst { line ->
+            line.contains("blind") || line.contains("блайнд") || line.contains("ante") || line.contains("анте")
+        }
+        if (blindLineIndex >= 0) {
+            val nums = numberPattern.findAll(lines[blindLineIndex])
+                .map { it.value.trim().replace(" ", "") }.toList()
+            if (nums.size >= 2) {
+                result += "Блайнды: ${formatNumber(nums[0])} / ${formatNumber(nums[1])}"
+            } else if (nums.isNotEmpty()) {
+                result += "Блайнды: ${formatNumber(nums[0])} (проверьте)"
+            }
+        }
+
+        result += "Карты: пока не распознаны автоматически"
+        result += "Позиции: пока не определены"
+        result += "Перетащите окно, чтобы переместить его."
+        return result.distinct().take(6).joinToString("\n")
+    }
+
+    private fun formatNumber(value: String): String {
+        val digits = value.filter { it.isDigit() }
+        if (digits.isEmpty()) return value
+        return digits.reversed().chunked(3).joinToString(" ").reversed()
     }
 }
