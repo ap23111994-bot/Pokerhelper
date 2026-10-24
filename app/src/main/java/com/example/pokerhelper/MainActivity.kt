@@ -1,7 +1,15 @@
 package com.example.pokerhelper
 
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -14,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +50,22 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun PokerHelperApp() {
+    val context = LocalContext.current
+    val projectionManager = remember {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+    val captureLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            val serviceIntent = Intent(context, LiveScreenCaptureService::class.java).apply {
+                putExtra(LiveScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(LiveScreenCaptureService.EXTRA_RESULT_DATA, data)
+            }
+            context.startForegroundService(serviceIntent)
+        }
+    }
     var page by remember { mutableIntStateOf(0) }
     val hero = remember { mutableStateListOf<PlayingCard?>(null, null) }
     val board = remember { mutableStateListOf<PlayingCard?>(null, null, null, null, null) }
@@ -56,6 +81,36 @@ private fun PokerHelperApp() {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("POKER HELPER", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Gold)
                 Text("Hand analysis · Tournament clock", color = Muted, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = {
+                            if (!Settings.canDrawOverlays(context)) {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                                context.startActivity(intent)
+                            } else {
+                                captureLauncher.launch(projectionManager.createScreenCaptureIntent())
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Start live OCR") }
+                    OutlinedButton(
+                        onClick = {
+                            context.startService(
+                                Intent(context, LiveScreenCaptureService::class.java)
+                                    .setAction(LiveScreenCaptureService.ACTION_STOP)
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Stop capture") }
+                }
+                Text(
+                    "Live OCR reads visible text. Card faces and seat positions still need a calibrated visual detector.",
+                    color = Muted,
+                    fontSize = 11.sp
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(onClick = { page = 0 }, modifier = Modifier.weight(1f)) { Text("Hand analysis") }
                     OutlinedButton(onClick = { page = 1 }, modifier = Modifier.weight(1f)) { Text("Tournament") }
