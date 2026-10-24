@@ -504,13 +504,24 @@ private object PokerPlayerImageReader {
                 !line.contains("NLH", true) && !line.contains("bank", true) &&
                 !line.contains("блайнд", true)
         }?.replace(Regex("\\s+"), " ")?.take(22) ?: return null
-        return PlayerInfo(name, stack, "МЕСТО ЗАНЯТО")
+        return PlayerInfo(name, stack, "СТАТУС НЕ РАСПОЗНАН")
     }
 
     private fun findStack(lines: List<String>): String? {
+        val joined = lines.joinToString(" ")
+            .replace('O', '0')
+            .replace('o', '0')
+        // Preserve common PPPoker stack suffixes instead of converting 12.41M into 1,241.
+        val abbreviated = Regex("(?i)(?<![A-Za-z0-9])(\\d{1,3}(?:[.,]\\d{1,3})?)\\s*([KMB])\\b")
+            .find(joined)
+        if (abbreviated != null) {
+            val amount = abbreviated.groupValues[1].replace('.', ',')
+            val suffix = abbreviated.groupValues[2].uppercase(Locale.ROOT)
+            return "$amount $suffix"
+        }
         val pattern = Regex("(?<![A-Za-z])\\d[\\d, .]{1,12}\\d(?![A-Za-z])")
         return lines.asSequence().flatMap { pattern.findAll(it).map { match -> match.value.trim() } }
-            .map { it.replace(" ", "").replace(",", "") }
+            .map { it.replace(" ", "").replace(",", "").replace(".", "") }
             .firstOrNull { value -> value.filter(Char::isDigit).length >= 2 }
             ?.let { value ->
                 val digits = value.filter(Char::isDigit)
