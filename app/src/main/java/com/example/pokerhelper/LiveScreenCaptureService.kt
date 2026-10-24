@@ -483,12 +483,16 @@ private object PokerTextParser {
         if (normalized.any { Regex("\\bnlh\\b").containsMatchIn(it) }) {
             result += "Игра: NLH (техасский холдем)"
         }
-        val potLineIndex = normalized.indexOfFirst { line ->
-            line.contains("pot") || line.contains("bank") || line.contains("банк") || line.contains("bahk")
-        }
-        if (potLineIndex >= 0) {
-            val number = numberPattern.find(lines[potLineIndex])?.value?.replace(" ", "")?.replace(",", "")
-            if (!number.isNullOrBlank()) result += "Банк: ${formatNumber(number)}"
+        // Read the value after the bank label; the chip stack often appears earlier
+        // on the same OCR line and must not be mistaken for the pot.
+        val bankMatch = Regex(
+            "(?i)(?:pot|bank|банк|bahk)\\s*[:：]?\\s*([0-9][0-9, .]*)"
+        ).find(text)
+        val bankValue = bankMatch?.groupValues?.getOrNull(1)
+            ?.filter { it.isDigit() }
+            ?.takeIf { it.isNotEmpty() }
+        if (bankValue != null) {
+            result += "Банк: ${formatNumber(bankValue)}"
         }
         val blindLineIndex = lines.indexOfFirst { raw ->
             val line = raw.lowercase(Locale.ROOT)
@@ -501,6 +505,8 @@ private object PokerTextParser {
 
         val heroCards = listOfNotNull(cards["Ваша карта 1"], cards["Ваша карта 2"])
         val boardCards = (1..5).mapNotNull { cards["Стол $it"] }
+        val allRecognizedCards = heroCards + boardCards
+        val hasDuplicateCards = allRecognizedCards.map { it.label }.distinct().size != allRecognizedCards.size
         result += if (heroCards.size == 2) "Ваши карты: ${heroCards.joinToString(" ") { it.label }}" else
             "Ваши карты: ${heroCards.joinToString(" ") { it.label }} (распознано ${heroCards.size}/2)"
         result += if (boardCards.isNotEmpty()) "Карты на столе: ${boardCards.joinToString(" ") { it.label }}" else
@@ -515,6 +521,8 @@ private object PokerTextParser {
         } else {
             result += "Игроки: распознавание не удалось"
         }
+        if (hasDuplicateCards) result += "ВНИМАНИЕ: карты распознаны неоднозначно — не используйте расчёт."
+        if (heroCards.size != 2 || boardCards.size !in listOf(0, 3, 4, 5)) result += "Рекомендация: недоступна — сначала проверьте карты."
         result += "Позиция: нижнее место — вы"
         result += "Проверьте имена и стеки: OCR может ошибаться."
         return result.take(9).joinToString("\n")
