@@ -56,16 +56,44 @@ private fun PokerHelperApp() {
     val projectionManager = remember {
         context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
     }
+    var overlayPermissionGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var captureStatus by remember { mutableStateOf("Нажмите «Начать распознавание», чтобы показать помощника поверх стола.") }
+
     val captureLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val data = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
-            val serviceIntent = Intent(context, LiveScreenCaptureService::class.java).apply {
-                putExtra(LiveScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(LiveScreenCaptureService.EXTRA_RESULT_DATA, data)
+            if (!Settings.canDrawOverlays(context)) {
+                overlayPermissionGranted = false
+                captureStatus = "Нет разрешения на окно поверх других приложений. Разрешите его и запустите снова."
+            } else {
+                try {
+                    val serviceIntent = Intent(context, LiveScreenCaptureService::class.java).apply {
+                        putExtra(LiveScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                        putExtra(LiveScreenCaptureService.EXTRA_RESULT_DATA, data)
+                    }
+                    context.startForegroundService(serviceIntent)
+                    captureStatus = "Запускаю захват экрана. Окно должно появиться поверх стола."
+                    overlayPermissionGranted = true
+                } catch (e: Exception) {
+                    captureStatus = "Не удалось запустить помощника: ${e.javaClass.simpleName}. Откройте приложение заново."
+                }
             }
-            context.startForegroundService(serviceIntent)
+        } else {
+            captureStatus = "Захват экрана отменён. Нажмите «Начать распознавание» и подтвердите запрос Android."
+        }
+    }
+
+    val overlaySettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        overlayPermissionGranted = Settings.canDrawOverlays(context)
+        if (overlayPermissionGranted) {
+            captureStatus = "Разрешение выдано. Теперь подтвердите захват экрана."
+            captureLauncher.launch(projectionManager.createScreenCaptureIntent())
+        } else {
+            captureStatus = "Разрешение не выдано. Включите «Разрешить отображение поверх других приложений»."
         }
     }
     var page by remember { mutableIntStateOf(0) }
@@ -86,12 +114,13 @@ private fun PokerHelperApp() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = {
-                            if (!Settings.canDrawOverlays(context)) {
+                            overlayPermissionGranted = Settings.canDrawOverlays(context)
+                            if (!overlayPermissionGranted) {
                                 val intent = Intent(
                                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                     Uri.parse("package:${context.packageName}")
                                 )
-                                context.startActivity(intent)
+                                overlaySettingsLauncher.launch(intent)
                             } else {
                                 captureLauncher.launch(projectionManager.createScreenCaptureIntent())
                             }
@@ -109,8 +138,13 @@ private fun PokerHelperApp() {
                     ) { Text("Остановить") }
                 }
                 Text(
-                    "Приложение считывает текст с экрана. Автоматическое распознавание карт и позиций игроков пока находится в разработке.",
-                    color = Muted,
+                    captureStatus,
+                    color = if (captureStatus.startsWith("Не удалось") || captureStatus.startsWith("Нет разрешения") || captureStatus.startsWith("Разрешение не выдано")) Color(0xFFFF9999) else Muted,
+                    fontSize = 12.sp
+                )
+                Text(
+                    if (overlayPermissionGranted) "Разрешение на плавающее окно: включено" else "Разрешение на плавающее окно: выключено",
+                    color = if (overlayPermissionGranted) Color(0xFF83D6A2) else Color(0xFFFF9999),
                     fontSize = 11.sp
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
