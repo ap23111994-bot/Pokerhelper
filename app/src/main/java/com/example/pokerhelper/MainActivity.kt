@@ -14,6 +14,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -78,7 +80,7 @@ private fun PokerHelperApp() {
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Gold, secondary = Color(0xFF8DC8A8), background = Felt, surface = Panel, onPrimary = Felt)) {
         Surface(Modifier.fillMaxSize(), color = Felt) {
-            Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("ПОКЕРНЫЙ ПОМОЩНИК", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Gold)
                 Text("Анализ раздачи · Таймер турнира", color = Muted, fontSize = 13.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -131,7 +133,7 @@ private fun PokerHelperApp() {
                         }
                         Button(onClick = {
                             val h = hero.filterNotNull(); val b = board.filterNotNull()
-                            val p = pot.toDoubleOrNull() ?: 0.0; val c = call.toDoubleOrNull() ?: 0.0
+                            val p = pot.replace(',', '.').toDoubleOrNull() ?: -1.0; val c = call.replace(',', '.').toDoubleOrNull() ?: -1.0
                             if (h.size == 2 && b.size >= 3 && p >= 0 && c >= 0) {
                                 busy = true
                                 scope.launch {
@@ -174,7 +176,7 @@ private fun CardSlot(label: String, selected: Boolean, modifier: Modifier = Modi
 
 @Composable
 private fun NumberField(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
-    OutlinedTextField(value = value, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d{0,9}(\\.\\d{0,2})?$"))) onChange(it) },
+    OutlinedTextField(value = value, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d{0,9}([.,]\\d{0,2})?$"))) onChange(it) },
         label = { Text(label) }, modifier = modifier, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
 }
 
